@@ -10,7 +10,9 @@ import GuessingPhase from './components/GuessingPhase';
 import EndGame from './components/EndGame';
 
 function GameContent() {
-  const { gameState, connectionError, leaveGame } = useGame();
+  const { gameState, connectionError, playerId, leaveGame } = useGame();
+  const me = gameState?.player1.id === playerId ? gameState?.player1 : gameState?.player2;
+  const opponent = gameState?.player1.id === playerId ? gameState?.player2 : gameState?.player1;
   const { language, setLanguage, t } = useLanguage();
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
 
@@ -33,6 +35,11 @@ function GameContent() {
           <h1 className="text-xl font-bold">{t('appTitle')}</h1>
           {gameState && <p className="text-sm text-muted-foreground">{t('room')} {gameState.roomCode}</p>}
         </div>
+        {me && opponent && (
+          <p className="text-sm font-semibold tabular-nums" aria-label={t('score')}>
+            {t('you')} {me.wins} – {opponent.wins} {opponent.name}
+          </p>
+        )}
         <div className="flex gap-2">
           <button
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}

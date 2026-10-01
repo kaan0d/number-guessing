@@ -14,6 +14,7 @@ export interface Player {
   isReady: boolean;
   minRange: number;
   maxRange: number;
+  wins: number; // kept across rematches
 }
 
 export type Response = 'higher' | 'lower' | 'correct';
@@ -35,7 +36,7 @@ export interface GameState {
 }
 
 export function newPlayer(id: string, name: string, avatar: string, settings: GameSettings): Player {
-  return { id, name, avatar, isReady: false, minRange: settings.minNumber, maxRange: settings.maxNumber };
+  return { id, name, avatar, isReady: false, minRange: settings.minNumber, maxRange: settings.maxNumber, wins: 0 };
 }
 
 export function playerOf(state: GameState, id: string): Player {
@@ -73,6 +74,7 @@ export function applyResponse(state: GameState, guesserId: string, guess: number
       ...guesser,
       minRange: response === 'higher' ? Math.max(guesser.minRange, guess + 1) : guesser.minRange,
       maxRange: response === 'lower' ? Math.min(guesser.maxRange, guess - 1) : guesser.maxRange,
+      wins: guesser.wins + (ended ? 1 : 0),
     },
     gamePhase: ended ? 'ended' : 'guessing',
     winner: ended ? guesserId : null,

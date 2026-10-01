@@ -26,6 +26,8 @@ test('rules: answer narrows range, passes turn, ends on correct', () => {
   assert.equal(s.gamePhase, 'ended')
   assert.equal(s.winner, 'a')
   assert.equal(s.currentTurnPlayerId, null)
+  assert.equal(s.player1.wins, 1)
+  assert.equal(s.player2.wins, 0)
 
   s = revealOpponent(s, 'b', 99)
   assert.equal(s.player1.selectedNumber, 99)
@@ -35,4 +37,5 @@ test('rules: answer narrows range, passes turn, ends on correct', () => {
   assert.equal(s.player1.selectedNumber, undefined)
   assert.equal(s.player1.minRange, 1)
   assert.equal(s.guesses.length, 0)
+  assert.equal(s.player1.wins, 1)
 })

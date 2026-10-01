@@ -75,6 +75,7 @@ export const translations = {
     confirmNumber: 'You are about to select',
     areYouSure: 'Are you sure?',
     guess: 'Guess',
+    score: 'Score',
   },
   tr: {
     appTitle: 'Sayı Tahmin Savaşı',
@@ -148,6 +149,7 @@ export const translations = {
     confirmNumber: 'Seçmek üzeresiniz',
     areYouSure: 'Emin misiniz?',
     guess: 'Tahmin Et',
+    score: 'Skor',
   },
 };
 

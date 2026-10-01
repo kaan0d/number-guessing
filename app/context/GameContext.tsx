@@ -194,12 +194,13 @@ export function GameProvider({ children }: { children: ReactNode }) {
     setPlayerNameState(name);
     connect({ type: 'join', room: roomCode.trim() }, (room) => {
       // Placeholder until the host answers with state_sync
+      const settings = { minNumber: 1, maxNumber: 100, turnTimeLimit: 10 };
       commit({
         roomCode: room,
-        settings: { minNumber: 1, maxNumber: 100, turnTimeLimit: 10 },
+        settings,
         gamePhase: 'number_selection',
-        player1: { id: 'pending_host', name: '...', avatar: '🎮', isReady: false, minRange: 1, maxRange: 100 },
-        player2: { id: playerId, name, avatar: '🎯', isReady: false, minRange: 1, maxRange: 100 },
+        player1: newPlayer('pending_host', '...', '🎮', settings),
+        player2: newPlayer(playerId, name, '🎯', settings),
         currentTurnPlayerId: null,
         guesses: [],
         winner: null,
