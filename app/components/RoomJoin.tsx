@@ -7,10 +7,10 @@ export default function RoomJoin() {
   const { gameState, leaveGame } = useGame();
   const { t } = useLanguage();
 
-  const settings = gameState?.settings;
+  if (!gameState) return null;
+  const settings = gameState.settings;
 
-  if (!gameState || !gameState.player2) {
-    return (
+  return (
       <div className="w-full max-w-md mx-auto space-y-6 fade-in">
       <div className="text-center space-y-2">
         <h2 className="text-4xl font-bold mb-2">⏳</h2>
@@ -67,30 +67,4 @@ export default function RoomJoin() {
         </button>
       </div>
     );
-  }
-
-  return (
-    <div className="w-full max-w-md mx-auto space-y-6 fade-in">
-      <div className="text-center">
-        <h2 className="text-4xl font-bold mb-2">🎉</h2>
-        <h2 className="text-2xl font-bold">{gameState.player2.name} {t('joinGame')}!</h2>
-      </div>
-
-      <div className="flex gap-3 items-center">
-        <div className="flex-1 bg-secondary rounded-xl p-4 text-center">
-          <p className="text-xs text-muted-foreground mb-2 text-center">{t('you')}</p>
-          <p className="text-2xl mb-1">{gameState.player1.avatar}</p>
-          <p className="font-semibold text-sm">{gameState.player1.name}</p>
-        </div>
-        <div className="text-xl text-muted-foreground font-bold">vs</div>
-        <div className="flex-1 bg-secondary rounded-xl p-4 text-center">
-          <p className="text-xs text-muted-foreground mb-2 text-center">{t('opponent')}</p>
-          <p className="text-2xl mb-1">{gameState.player2?.avatar}</p>
-          <p className="font-semibold text-sm">{gameState.player2?.name}</p>
-        </div>
-      </div>
-
-      <p className="text-center text-muted-foreground animate-pulse">{t('bothReady')}</p>
-    </div>
-  );
 }
