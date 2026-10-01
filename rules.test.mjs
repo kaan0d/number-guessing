@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { BOT_ID, applyResponse, botGuess, isSolo, readyBot, computeResponse, hideSecret, newPlayer, resetRound, revealOpponent, takeBackPending } from './app/context/rules.ts'
+import { BOT_ID, applyResponse, botGuess, isSolo, readyBot, computeResponse, hideSecret, newPlayer, resetRound } from './app/context/rules.ts'
 
 const settings = { minNumber: 1, maxNumber: 100, turnTimeLimit: 0 }
 const start = () => ({
@@ -29,9 +29,6 @@ test('rules: answer narrows range, passes turn, ends on correct', () => {
   assert.equal(s.player1.wins, 1)
   assert.equal(s.player2.wins, 0)
 
-  s = revealOpponent(s, 'b', 99)
-  assert.equal(s.player1.selectedNumber, 99)
-
   s = resetRound(s)
   assert.equal(s.gamePhase, 'number_selection')
   assert.equal(s.player1.selectedNumber, undefined)
@@ -40,13 +37,8 @@ test('rules: answer narrows range, passes turn, ends on correct', () => {
   assert.equal(s.player1.wins, 1)
 })
 
-test('rules: rejoin sync hides our secret and takes back an unanswered guess', () => {
-  const s = takeBackPending(start(), 'a')
-  assert.equal(s.guesses.length, 0)
-  assert.equal(s.currentTurnPlayerId, 'a')
-  assert.equal(takeBackPending(start(), 'b').guesses.length, 1)
-
-  const sent = hideSecret(s, 'a')
+test('rules: the opponent gets everything but our secret', () => {
+  const sent = hideSecret(start(), 'a')
   assert.equal(sent.player1.selectedNumber, undefined)
   assert.equal(sent.player2.selectedNumber, 70)
 })

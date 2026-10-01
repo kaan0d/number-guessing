@@ -1,4 +1,4 @@
-// Pure game rules, shared by the multiplayer and solo paths and by rules.test.mjs.
+// Pure game rules, shared by the game server (relay.mjs), solo mode and rules.test.mjs.
 
 export interface GameSettings {
   minNumber: number;
@@ -60,13 +60,6 @@ export function playerOf(state: GameState, id: string): Player {
   return state.player1.id === id ? state.player1 : state.player2!;
 }
 
-// Sets the opponent's secret number, which only arrives once the game ends.
-export function revealOpponent(state: GameState, myId: string, secret: number): GameState {
-  return state.player1.id === myId
-    ? { ...state, player2: { ...state.player2!, selectedNumber: secret } }
-    : { ...state, player1: { ...state.player1, selectedNumber: secret } };
-}
-
 export function randomIn(min: number, max: number) {
   return min + Math.floor(Math.random() * (max - min + 1));
 }
@@ -99,19 +92,11 @@ export function applyResponse(state: GameState, guesserId: string, guess: number
   };
 }
 
-// What we send an opponent who rejoins: everything but our secret number.
+// What the server sends myId's opponent: everything but myId's secret number.
 export function hideSecret(state: GameState, myId: string): GameState {
   return state.player1.id === myId
     ? { ...state, player1: { ...state.player1, selectedNumber: undefined } }
     : { ...state, player2: { ...state.player2!, selectedNumber: undefined } };
-}
-
-// A guess of ours still pending when the opponent dropped never reached them:
-// take it back and give the turn back to us.
-export function takeBackPending(state: GameState, myId: string): GameState {
-  const last = state.guesses[state.guesses.length - 1];
-  if (last?.response !== 'pending' || last.guesser !== myId) return state;
-  return { ...state, guesses: state.guesses.slice(0, -1), currentTurnPlayerId: myId };
 }
 
 export function resetRound(state: GameState): GameState {
