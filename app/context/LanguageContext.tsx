@@ -76,6 +76,7 @@ export const translations = {
     areYouSure: 'Are you sure?',
     guess: 'Guess',
     score: 'Score',
+    binarySearchMax: 'Binary search never needs more than',
     opponentReconnecting: 'Opponent disconnected. Waiting 30 s for them to come back…',
   },
   tr: {
@@ -151,6 +152,7 @@ export const translations = {
     areYouSure: 'Emin misiniz?',
     guess: 'Tahmin Et',
     score: 'Skor',
+    binarySearchMax: 'İkili aramayla gereken en fazla tahmin:',
     opponentReconnecting: 'Rakibin bağlantısı koptu. Geri dönmesi için 30 sn bekleniyor…',
   },
 };

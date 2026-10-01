@@ -11,6 +11,9 @@ export default function EndGame() {
   const winner = gameState?.winner === gameState?.player1.id ? gameState?.player1 : gameState?.player2;
   const loser = gameState?.winner === gameState?.player1.id ? gameState?.player2 : gameState?.player1;
   const totalGuesses = gameState?.guesses.filter(g => g.guesser === gameState.winner).length ?? 0;
+  const rangeSize = gameState ? gameState.settings.maxNumber - gameState.settings.minNumber + 1 : 1;
+  // Halving the range each guess finds any number within this many tries.
+  const binaryWorst = Math.ceil(Math.log2(rangeSize + 1));
 
   return (
     <div className="w-full max-w-md mx-auto space-y-6 fade-in">
@@ -35,6 +38,7 @@ export default function EndGame() {
       <div className="bg-secondary rounded-xl p-5 text-center space-y-1">
         <p className="text-sm text-muted-foreground">{t('guessesMode')}</p>
         <p className="text-5xl font-bold">{totalGuesses}</p>
+        <p className="text-xs text-muted-foreground">{t('binarySearchMax')} {binaryWorst}</p>
       </div>
 
       <div className="bg-secondary rounded-xl p-4">
