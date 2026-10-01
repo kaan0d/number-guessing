@@ -13,18 +13,8 @@ export const metadata: Metadata = {
   description: "Pick a secret number, then take turns guessing your opponent's number. First to guess correctly wins!",
   icons: {
     icon: [
-      {
-        url: `${base}/icon-light-32x32.png`,
-        media: '(prefers-color-scheme: light)',
-      },
-      {
-        url: `${base}/icon-dark-32x32.png`,
-        media: '(prefers-color-scheme: dark)',
-      },
-      {
-        url: `${base}/icon.svg`,
-        type: 'image/svg+xml',
-      },
+      { url: `${base}/icon.svg`, type: 'image/svg+xml' },
+      { url: `${base}/icon-32.png`, sizes: '32x32', type: 'image/png' },
     ],
     apple: `${base}/apple-icon.png`,
   },
