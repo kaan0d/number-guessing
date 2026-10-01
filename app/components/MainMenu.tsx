@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useGame, GameSettings } from '../context/GameContext';
+import { useGame, GameSettings, ONLINE } from '../context/GameContext';
 import { useLanguage } from '../context/LanguageContext';
 
 const DEFAULT_SETTINGS: GameSettings = { minNumber: 1, maxNumber: 100, turnTimeLimit: 10 };
@@ -228,21 +228,23 @@ export default function MainMenu() {
       </div>
 
       <div className="space-y-3">
-        <button
-          onClick={() => { setSolo(false); setView('settings'); }}
-          className="w-full py-4 rounded-xl bg-primary text-primary-foreground text-lg font-semibold hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
-        >
-          <span>➕</span>
-          {t('createGame')}
-        </button>
+        {ONLINE && <>
+          <button
+            onClick={() => { setSolo(false); setView('settings'); }}
+            className="w-full py-4 rounded-xl bg-primary text-primary-foreground text-lg font-semibold hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+          >
+            <span>➕</span>
+            {t('createGame')}
+          </button>
 
-        <button
-          onClick={() => setView('join')}
-          className="w-full py-4 rounded-xl bg-secondary text-secondary-foreground text-lg font-semibold hover:opacity-80 transition-opacity flex items-center justify-center gap-2"
-        >
-          <span>🔓</span>
-          {t('joinGame')}
-        </button>
+          <button
+            onClick={() => setView('join')}
+            className="w-full py-4 rounded-xl bg-secondary text-secondary-foreground text-lg font-semibold hover:opacity-80 transition-opacity flex items-center justify-center gap-2"
+          >
+            <span>🔓</span>
+            {t('joinGame')}
+          </button>
+        </>}
 
         <button
           onClick={() => { setSolo(true); setView('settings'); }}

@@ -26,6 +26,12 @@ pnpm start    # production server, PORT and HOST env vars (default 3000, 0.0.0.0
 pnpm test     # relay test (create, join, forward, full room, disconnect, rejoin) and game rules test
 ```
 
+## GitHub Pages
+
+Every push to `main` runs `.github/workflows/pages.yml`: tests, then a static export served at https://kaandinc.com/number-guessing/. Pages cannot run the relay, so the export connects to the one on the VPS below through the `RELAY_URL` repository variable (`wss://<host>/ws`). Without that variable the Pages site offers solo play only.
+
+One-time setup: Settings → Pages → Source: GitHub Actions, and Settings → Secrets and variables → Actions → Variables → `RELAY_URL`.
+
 ## Deploy on a VPS
 
 Run `pnpm build`, then keep `pnpm start` alive with systemd or pm2. Put nginx in front for TLS. WebSocket upgrades must pass through:

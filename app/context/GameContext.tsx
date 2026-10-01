@@ -39,8 +39,13 @@ function loadSaved(): GameState | null {
   try { return JSON.parse(sessionStorage.getItem(SAVE_KEY) ?? 'null'); } catch { return null; }
 }
 
+// A static build (GitHub Pages) points at a relay elsewhere; 'none' means
+// there is no relay and only solo play is offered.
+const RELAY_URL = process.env.NEXT_PUBLIC_RELAY_URL;
+export const ONLINE = RELAY_URL !== 'none';
+
 function relayUrl() {
-  return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+  return RELAY_URL || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
 }
 
 export function GameProvider({ children }: { children: ReactNode }) {
