@@ -33,7 +33,7 @@ function GameContent() {
       <header className="border-b border-border px-4 py-3 flex justify-between items-center">
         <div>
           <h1 className="text-xl font-bold">{t('appTitle')}</h1>
-          {gameState && <p className="text-sm text-muted-foreground">{t('room')} {gameState.roomCode}</p>}
+          {gameState?.roomCode && <p className="text-sm text-muted-foreground">{t('room')} {gameState.roomCode}</p>}
         </div>
         {me && opponent && (
           <p className="text-sm font-semibold tabular-nums" aria-label={t('score')}>

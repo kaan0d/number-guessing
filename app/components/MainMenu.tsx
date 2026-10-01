@@ -17,10 +17,11 @@ function randomName() {
 }
 
 export default function MainMenu() {
-  const { createGame, joinGame } = useGame();
+  const { createGame, startSolo, joinGame } = useGame();
   const { t, language, setLanguage } = useLanguage();
   const [name, setName] = useState(() => randomName());
   const [view, setView] = useState<'main' | 'settings' | 'join'>('main');
+  const [solo, setSolo] = useState(false);
   const [roomCode, setRoomCode] = useState('');
   const [settings, setSettings] = useState<GameSettings>(DEFAULT_SETTINGS);
   const [settingsError, setSettingsError] = useState('');
@@ -45,7 +46,7 @@ export default function MainMenu() {
   const handleCreate = () => {
     if (!name.trim()) return;
     if (!validateSettings()) return;
-    createGame(name.trim(), settings);
+    (solo ? startSolo : createGame)(name.trim(), settings);
   };
 
   const handleJoin = () => {
@@ -120,7 +121,7 @@ export default function MainMenu() {
       <div className="w-full max-w-md mx-auto space-y-6 slide-in p-4">
         <div className="text-center space-y-1">
           <h1 className="text-4xl font-bold mb-2">⚙️</h1>
-          <h1 className="text-3xl font-bold">{t('createGame')}</h1>
+          <h1 className="text-3xl font-bold">{t(solo ? 'playComputer' : 'createGame')}</h1>
           <p className="text-muted-foreground text-sm">{t('configureSettings')}</p>
         </div>
 
@@ -204,7 +205,7 @@ export default function MainMenu() {
             disabled={!name.trim()}
             className="w-full py-3 rounded-lg bg-primary text-primary-foreground font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity"
           >
-            {t('createGame')}
+            {t(solo ? 'startGame' : 'createGame')}
           </button>
 
           <button onClick={() => setView('main')} className="w-full py-2 rounded-lg bg-secondary text-secondary-foreground hover:opacity-80 transition-opacity">
@@ -228,7 +229,7 @@ export default function MainMenu() {
 
       <div className="space-y-3">
         <button
-          onClick={() => setView('settings')}
+          onClick={() => { setSolo(false); setView('settings'); }}
           className="w-full py-4 rounded-xl bg-primary text-primary-foreground text-lg font-semibold hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
         >
           <span>➕</span>
@@ -241,6 +242,14 @@ export default function MainMenu() {
         >
           <span>🔓</span>
           {t('joinGame')}
+        </button>
+
+        <button
+          onClick={() => { setSolo(true); setView('settings'); }}
+          className="w-full py-4 rounded-xl bg-secondary text-secondary-foreground text-lg font-semibold hover:opacity-80 transition-opacity flex items-center justify-center gap-2"
+        >
+          <span>🤖</span>
+          {t('playComputer')}
         </button>
       </div>
 

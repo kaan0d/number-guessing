@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, useRef, ReactNode, useCallback } from 'react';
-import { GameSettings, GameState, applyResponse, computeResponse, hideSecret, newPlayer, playerOf, resetRound, revealOpponent, takeBackPending } from './rules';
+import { GameSettings, GameState, applyResponse, computeResponse, BOT_ID, botGuess, hideSecret, isSolo, newPlayer, readyBot, playerOf, resetRound, revealOpponent, takeBackPending } from './rules';
 
 export type { GameSettings, GameState } from './rules';
 
@@ -15,6 +15,7 @@ interface GameContextType {
   playerName: string;
   setPlayerName: (name: string) => void;
   createGame: (name: string, settings: GameSettings) => void;
+  startSolo: (name: string, settings: GameSettings) => void;
   joinGame: (roomCode: string, name: string) => void;
   selectNumber: (number: number) => void;
   makeGuess: (number: number) => void;
@@ -30,6 +31,7 @@ const SAVE_KEY = 'game';
 const PLAYER_KEY = 'playerId';
 // How long we wait for a disconnected opponent before calling the game off.
 const REJOIN_GRACE_MS = 30_000;
+const BOT_DELAY_MS = 1500;
 
 // Session storage survives a refresh but not closing the tab. Missing during
 // server rendering and in some private modes, hence the try/catch.
@@ -66,7 +68,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     stateRef.current = next;
     setGameState(next);
     try {
-      if (next?.player2 && next.gamePhase !== 'cancelled') sessionStorage.setItem(SAVE_KEY, JSON.stringify(next));
+      if (next?.player2 && !isSolo(next) && next.gamePhase !== 'cancelled') sessionStorage.setItem(SAVE_KEY, JSON.stringify(next));
       else sessionStorage.removeItem(SAVE_KEY);
     } catch {}
   }, []);
@@ -254,6 +256,22 @@ export function GameProvider({ children }: { children: ReactNode }) {
     }));
   };
 
+  // Solo games never touch the relay: the computer is player 2.
+  const startSolo = (name: string, settings: GameSettings) => {
+    setPlayerNameState(name);
+    commit(readyBot({
+      roomCode: '',
+      settings,
+      gamePhase: 'number_selection',
+      player1: newPlayer(playerId, name, '🎮', settings),
+      player2: newPlayer(BOT_ID, 'Bot', '🤖', settings),
+      currentTurnPlayerId: null,
+      guesses: [],
+      winner: null,
+      createdAt: Date.now(),
+    }));
+  };
+
   const joinGame = (roomCode: string, name: string) => {
     setPlayerNameState(name);
     connect({ type: 'join', room: roomCode.trim() }, (room) => {
@@ -289,10 +307,24 @@ export function GameProvider({ children }: { children: ReactNode }) {
     broadcast('number_selected', { opponentId: playerId, isReady: true });
   };
 
+  // The computer's turn in solo mode: it answers itself and hands the turn back.
+  const playBot = useCallback(() => {
+    const s = stateRef.current;
+    if (!s || s.currentTurnPlayerId !== BOT_ID) return;
+    const guess = botGuess(s);
+    commit(applyResponse(s, BOT_ID, guess, computeResponse(guess, s.player1.selectedNumber!), s.player1.id));
+  }, [commit]);
+
   const makeGuess = useCallback((number: number) => {
     const prev = stateRef.current;
     // No guessing while the opponent is away: nobody would answer.
     if (!prev || prev.currentTurnPlayerId !== playerId || awayTimer.current) return;
+    if (isSolo(prev)) {
+      const next = applyResponse(prev, playerId, number, computeResponse(number, prev.player2!.selectedNumber!), BOT_ID);
+      commit(next);
+      if (next.gamePhase === 'guessing') setTimeout(playBot, BOT_DELAY_MS);
+      return;
+    }
     // The opponent computes the response; show it as pending until guess_result arrives
     commit({
       ...prev,
@@ -300,12 +332,12 @@ export function GameProvider({ children }: { children: ReactNode }) {
       currentTurnPlayerId: null,
     });
     broadcast('guess_made', { guesserId: playerId, guessedNumber: number });
-  }, [playerId, broadcast, commit]);
+  }, [playerId, broadcast, commit, playBot]);
 
   const rematch = () => {
     const prev = stateRef.current;
     if (!prev) return;
-    commit(resetRound(prev));
+    commit(isSolo(prev) ? readyBot(resetRound(prev)) : resetRound(prev));
     broadcast('rematch', {});
   };
 
@@ -329,7 +361,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   return (
     <GameContext.Provider value={{
       gameState, opponentAway, connectionError, playerId, playerName, setPlayerName,
-      createGame, joinGame, selectNumber, makeGuess, rematch, leaveGame,
+      createGame, startSolo, joinGame, selectNumber, makeGuess, rematch, leaveGame,
     }}>
       {children}
     </GameContext.Provider>

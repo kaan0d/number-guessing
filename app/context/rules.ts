@@ -35,6 +35,23 @@ export interface GameState {
   createdAt: number;
 }
 
+export const BOT_ID = 'bot';
+
+export function isSolo(state: GameState) {
+  return state.player2?.id === BOT_ID;
+}
+
+// The computer locks a fresh random number, so it is always ready.
+export function readyBot(state: GameState): GameState {
+  const { minNumber, maxNumber } = state.settings;
+  return { ...state, player2: { ...state.player2!, isReady: true, selectedNumber: randomIn(minNumber, maxNumber) } };
+}
+
+// ponytail: the computer guesses at random inside its narrowed range; guess the midpoint for a harder bot
+export function botGuess(state: GameState): number {
+  return randomIn(state.player2!.minRange, state.player2!.maxRange);
+}
+
 export function newPlayer(id: string, name: string, avatar: string, settings: GameSettings): Player {
   return { id, name, avatar, isReady: false, minRange: settings.minNumber, maxRange: settings.maxNumber, wins: 0 };
 }
