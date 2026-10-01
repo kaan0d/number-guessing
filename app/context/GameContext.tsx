@@ -1,8 +1,6 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, useRef, ReactNode, useCallback } from 'react';
-import { createClient } from '@/lib/supabase/client';
-import { RealtimeChannel } from '@supabase/supabase-js';
 
 export interface GameSettings {
   minNumber: number;
@@ -42,8 +40,11 @@ export interface GameState {
   createdAt: number;
 }
 
+export type ConnectionError = 'not_found' | 'full' | 'server_full' | 'connection';
+
 interface GameContextType {
   gameState: GameState | null;
+  connectionError: ConnectionError | null;
   playerId: string;
   playerName: string;
   setPlayerName: (name: string) => void;
@@ -57,10 +58,8 @@ interface GameContextType {
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
 
-const JOIN_TIMEOUT_MS = 5000;
-export const PENDING_HOST = 'pending_host';
-
 type Player = GameState['player1'];
+type Payload = Record<string, any>;
 
 // Compute the automatic response for a guess against a secret number
 function computeResponse(guess: number, secretNumber: number): 'higher' | 'lower' | 'correct' {
@@ -83,11 +82,16 @@ function resetRound(state: GameState): GameState {
   };
 }
 
+function relayUrl() {
+  return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+}
+
 export function GameProvider({ children }: { children: ReactNode }) {
   const [playerId] = useState(() => `player_${Math.random().toString(36).slice(2, 11)}`);
   const [playerName, setPlayerNameState] = useState(() => `Player${Math.floor(1000 + Math.random() * 9000)}`);
   const [gameState, setGameState] = useState<GameState | null>(null);
-  const channelRef = useRef<RealtimeChannel | null>(null);
+  const [connectionError, setConnectionError] = useState<ConnectionError | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
   // Mirrors gameState synchronously, so handlers can compute the next state
   // and broadcast it without side effects inside setState updaters.
   const stateRef = useRef<GameState | null>(null);
@@ -105,26 +109,22 @@ export function GameProvider({ children }: { children: ReactNode }) {
     else if (prev.player2) commit({ ...prev, player2: { ...prev.player2, name } });
   };
 
-  const broadcast = useCallback((event: string, payload: Record<string, unknown>) => {
-    channelRef.current?.send({
-      type: 'broadcast',
-      event,
-      payload: { ...payload, senderId: playerId },
-    });
+  const broadcast = useCallback((event: string, payload: Payload) => {
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'broadcast', event, payload: { ...payload, senderId: playerId } }));
+    }
   }, [playerId]);
 
-  const setupChannel = useCallback((roomCode: string, onSubscribed?: () => void) => {
-    channelRef.current?.unsubscribe();
+  // Game events from the opponent
+  const onEvent = useCallback((event: string, payload: Payload) => {
+    const prev = stateRef.current;
+    if (!prev) return;
 
-    const channel = createClient().channel(`room:${roomCode}`, {
-      config: { broadcast: { self: false } },
-    });
-
-    channel
-      .on('broadcast', { event: 'player_joined' }, ({ payload }) => {
-        const prev = stateRef.current;
-        // Only the host accepts joins, and only into an empty seat.
-        if (!prev || prev.player1.id !== playerId || prev.gamePhase !== 'waiting') return;
+    switch (event) {
+      case 'player_joined': {
+        // Only the host accepts the join.
+        if (prev.player1.id !== playerId || prev.gamePhase !== 'waiting') return;
         const next: GameState = {
           ...prev,
           gamePhase: 'number_selection',
@@ -139,12 +139,11 @@ export function GameProvider({ children }: { children: ReactNode }) {
         };
         commit(next);
         broadcast('state_sync', { state: next });
-      })
-      .on('broadcast', { event: 'state_sync' }, ({ payload }) => {
-        const prev = stateRef.current;
+        return;
+      }
+      case 'state_sync': {
         const incoming = payload.state as GameState;
-        // Ignore syncs meant for another joiner of the same room.
-        if (!prev || !incoming.player2 || incoming.player2.id !== playerId) return;
+        if (!incoming.player2 || incoming.player2.id !== playerId) return;
         commit({
           ...incoming,
           player2: {
@@ -153,10 +152,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
             isReady: !!prev.player2?.isReady || incoming.player2.isReady,
           },
         });
-      })
-      .on('broadcast', { event: 'number_selected' }, ({ payload }) => {
-        const prev = stateRef.current;
-        if (!prev) return;
+        return;
+      }
+      case 'number_selected': {
         const isOpponentPlayer1 = payload.opponentId === prev.player1.id;
         const opponent = isOpponentPlayer1 ? prev.player1 : prev.player2;
         if (!opponent) return;
@@ -172,11 +170,11 @@ export function GameProvider({ children }: { children: ReactNode }) {
             isReady: payload.isReady,
           },
         });
-      })
-      .on('broadcast', { event: 'guess_made' }, ({ payload }) => {
+        return;
+      }
+      case 'guess_made': {
         // The opponent guessed our number: answer automatically.
-        const prev = stateRef.current;
-        if (!prev || !prev.player2 || prev.gamePhase !== 'guessing') return;
+        if (!prev.player2 || prev.gamePhase !== 'guessing') return;
         const isPlayer1 = prev.player1.id === playerId;
         const mySecretNumber = isPlayer1 ? prev.player1.selectedNumber : prev.player2.selectedNumber;
         if (mySecretNumber === undefined) return;
@@ -207,10 +205,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
           currentTurnPlayerId,
         });
         broadcast('guess_result', { guesses, guesserId, newMin, newMax, gamePhase, winner, currentTurnPlayerId });
-      })
-      .on('broadcast', { event: 'guess_result' }, ({ payload }) => {
-        const prev = stateRef.current;
-        if (!prev) return;
+        return;
+      }
+      case 'guess_result': {
         const isGuesserPlayer1 = payload.guesserId === prev.player1.id;
         commit({
           ...prev,
@@ -225,39 +222,57 @@ export function GameProvider({ children }: { children: ReactNode }) {
           winner: payload.winner,
           currentTurnPlayerId: payload.currentTurnPlayerId,
         });
-      })
-      .on('broadcast', { event: 'rematch' }, () => {
-        const prev = stateRef.current;
-        if (prev) commit(resetRound(prev));
-      })
-      .on('broadcast', { event: 'player_left' }, ({ payload }) => {
-        const prev = stateRef.current;
-        if (!prev) return;
-        // Ignore strangers (e.g. a rejected third player) leaving the room.
-        if (payload.senderId !== prev.player1.id && payload.senderId !== prev.player2?.id) return;
-        commit({ ...prev, gamePhase: 'cancelled' });
-      })
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') onSubscribed?.();
-      });
-
-    channelRef.current = channel;
+        return;
+      }
+      case 'rematch':
+        commit(resetRound(prev));
+        return;
+    }
   }, [playerId, broadcast, commit]);
 
-  // Tell the opponent when the tab closes
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (stateRef.current) broadcast('player_left', {});
+  // Opens a relay connection, sends `hello` (create or join), then routes
+  // relay replies to `onReady` and game events to onEvent.
+  const connect = useCallback((hello: Payload, onReady: (room: string) => void) => {
+    wsRef.current?.close();
+    setConnectionError(null);
+    const ws = new WebSocket(relayUrl());
+    wsRef.current = ws;
+    let ready = false;
+
+    ws.onopen = () => ws.send(JSON.stringify(hello));
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'created' || msg.type === 'joined') {
+        ready = true;
+        onReady(msg.room);
+      } else if (msg.type === 'error') {
+        wsRef.current = null;
+        ws.close();
+        setConnectionError(msg.reason);
+      } else if (msg.type === 'peer_left') {
+        // Leave the room too, so nobody can join a finished game.
+        wsRef.current = null;
+        ws.close();
+        const prev = stateRef.current;
+        if (prev) commit({ ...prev, gamePhase: 'cancelled' });
+      } else if (msg.type === 'broadcast') {
+        onEvent(msg.event, msg.payload);
+      }
     };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [broadcast]);
+    ws.onclose = () => {
+      // Closed by leaveGame or a newer connection: nothing to report.
+      if (wsRef.current !== ws) return;
+      wsRef.current = null;
+      if (!ready || stateRef.current?.gamePhase !== 'cancelled') {
+        commit(null);
+        setConnectionError('connection');
+      }
+    };
+  }, [commit, onEvent]);
 
   const createGame = (name: string, settings: GameSettings) => {
     setPlayerNameState(name);
-    // ponytail: 4-digit codes can collide between rooms; add a presence check if traffic grows
-    const roomCode = String(Math.floor(1000 + Math.random() * 9000));
-    commit({
+    connect({ type: 'create' }, (roomCode) => commit({
       roomCode,
       settings,
       gamePhase: 'waiting',
@@ -267,31 +282,25 @@ export function GameProvider({ children }: { children: ReactNode }) {
       guesses: [],
       winner: null,
       createdAt: Date.now(),
-    });
-    setupChannel(roomCode);
+    }));
   };
 
   const joinGame = (roomCode: string, name: string) => {
     setPlayerNameState(name);
-    const trimmedCode = roomCode.trim();
-    commit({
-      roomCode: trimmedCode,
-      settings: { minNumber: 1, maxNumber: 100, turnTimeLimit: 10 },
-      gamePhase: 'number_selection',
-      player1: { id: PENDING_HOST, name: '...', avatar: '🎮', isReady: false, minRange: 1, maxRange: 100 },
-      player2: { id: playerId, name, avatar: '🎯', isReady: false, minRange: 1, maxRange: 100 },
-      currentTurnPlayerId: null,
-      guesses: [],
-      winner: null,
-      createdAt: Date.now(),
-    });
-    setupChannel(trimmedCode, () => {
+    connect({ type: 'join', room: roomCode.trim() }, (room) => {
+      // Placeholder until the host answers with state_sync
+      commit({
+        roomCode: room,
+        settings: { minNumber: 1, maxNumber: 100, turnTimeLimit: 10 },
+        gamePhase: 'number_selection',
+        player1: { id: 'pending_host', name: '...', avatar: '🎮', isReady: false, minRange: 1, maxRange: 100 },
+        player2: { id: playerId, name, avatar: '🎯', isReady: false, minRange: 1, maxRange: 100 },
+        currentTurnPlayerId: null,
+        guesses: [],
+        winner: null,
+        createdAt: Date.now(),
+      });
       broadcast('player_joined', { playerId, playerName: name });
-      // No host answered: the room does not exist or is already full.
-      setTimeout(() => {
-        const s = stateRef.current;
-        if (s?.roomCode === trimmedCode && s.player1.id === PENDING_HOST) commit({ ...s, gamePhase: 'cancelled' });
-      }, JOIN_TIMEOUT_MS);
     });
   };
 
@@ -329,20 +338,24 @@ export function GameProvider({ children }: { children: ReactNode }) {
     broadcast('rematch', {});
   };
 
+  // Closing the socket tells the relay, which notifies the opponent.
   const leaveGame = () => {
-    broadcast('player_left', {});
-    channelRef.current?.unsubscribe();
-    channelRef.current = null;
+    const ws = wsRef.current;
+    wsRef.current = null;
+    ws?.close();
+    setConnectionError(null);
     commit(null);
   };
 
   useEffect(() => () => {
-    channelRef.current?.unsubscribe();
+    const ws = wsRef.current;
+    wsRef.current = null;
+    ws?.close();
   }, []);
 
   return (
     <GameContext.Provider value={{
-      gameState, playerId, playerName, setPlayerName,
+      gameState, connectionError, playerId, playerName, setPlayerName,
       createGame, joinGame, selectNumber, makeGuess, rematch, leaveGame,
     }}>
       {children}

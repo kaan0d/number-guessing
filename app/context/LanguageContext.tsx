@@ -60,7 +60,10 @@ export const translations = {
     // Cancelled
     opponentLeft: 'Opponent Left',
     playerDisconnected: 'The other player has disconnected from the game.',
-    roomNotFound: 'Room not found or already full.',
+    roomNotFound: 'Room not found.',
+    roomFull: 'This room is already full.',
+    serverFull: 'No free rooms right now. Try again soon.',
+    connectionLost: 'Could not reach the game server.',
     returnToMenu: 'Return to Main Menu',
     // Header
     room: 'Room:',
@@ -130,7 +133,10 @@ export const translations = {
     // Cancelled
     opponentLeft: 'Rakip Ayrıldı',
     playerDisconnected: 'Diğer oyuncu oyundan ayrıldı.',
-    roomNotFound: 'Oda bulunamadı veya dolu.',
+    roomNotFound: 'Oda bulunamadı.',
+    roomFull: 'Bu oda zaten dolu.',
+    serverFull: 'Şu an boş oda yok. Birazdan tekrar deneyin.',
+    connectionLost: 'Oyun sunucusuna ulaşılamadı.',
     returnToMenu: 'Ana Menüye Dön',
     // Header
     room: 'Oda:',

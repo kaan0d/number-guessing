@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { GameProvider, useGame, PENDING_HOST } from './context/GameContext';
+import { GameProvider, useGame } from './context/GameContext';
 import { LanguageProvider, useLanguage } from './context/LanguageContext';
 import MainMenu from './components/MainMenu';
 import RoomJoin from './components/RoomJoin';
@@ -10,7 +10,7 @@ import GuessingPhase from './components/GuessingPhase';
 import EndGame from './components/EndGame';
 
 function GameContent() {
-  const { gameState, leaveGame } = useGame();
+  const { gameState, connectionError, leaveGame } = useGame();
   const { language, setLanguage, t } = useLanguage();
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
 
@@ -54,6 +54,11 @@ function GameContent() {
         </div>
       </header>
 
+      {!gameState && connectionError && (
+        <p role="alert" className="mx-auto mt-4 max-w-md px-4 text-center text-sm font-medium text-destructive">
+          {t(connectionError === 'connection' ? 'connectionLost' : connectionError === 'full' ? 'roomFull' : connectionError === 'server_full' ? 'serverFull' : 'roomNotFound')}
+        </p>
+      )}
       {!gameState && <MainMenu />}
       {gameState && (
       <main className="flex-1 flex items-center justify-center p-4">
@@ -64,14 +69,8 @@ function GameContent() {
         {gameState.gamePhase === 'cancelled' && (
           <div className="w-full max-w-md mx-auto text-center space-y-6 fade-in">
             <div className="text-6xl">👋</div>
-            {gameState.player1.id === PENDING_HOST ? (
-              <h2 className="text-2xl font-bold">{t('roomNotFound')}</h2>
-            ) : (
-              <>
-                <h2 className="text-2xl font-bold">{t('opponentLeft')}</h2>
-                <p className="text-muted-foreground">{t('playerDisconnected')}</p>
-              </>
-            )}
+            <h2 className="text-2xl font-bold">{t('opponentLeft')}</h2>
+            <p className="text-muted-foreground">{t('playerDisconnected')}</p>
             <button
               onClick={leaveGame}
               className="w-full py-3 rounded-lg bg-primary text-primary-foreground font-semibold hover:opacity-90 transition-opacity"
