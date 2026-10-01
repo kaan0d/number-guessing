@@ -7,7 +7,6 @@ import { useLanguage } from '../context/LanguageContext';
 export default function GuessingPhase() {
   const { gameState, playerId, makeGuess } = useGame();
   const { t } = useLanguage();
-  const [guess, setGuess] = useState<number | null>(null);
   const [confirmGuess, setConfirmGuess] = useState<number | null>(null);
   const [timeLeft, setTimeLeft] = useState<number>(10);
   const [lastResult, setLastResult] = useState<{ number: number; response: string } | null>(null);
@@ -36,32 +35,25 @@ export default function GuessingPhase() {
     }
   }, [gameState?.guesses]);
 
-  // Timer — only active on my turn, and only if there's a time limit
+  // Timer: counts down only on my turn, and only if there's a time limit
   useEffect(() => {
-    if (!isMyTurn || timeLimit === 0) {
-      setTimeLeft(timeLimit || 0);
-      return;
-    }
     setTimeLeft(timeLimit);
-    const timer = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          const rand = Math.floor(Math.random() * (myMaxRange - myMinRange + 1)) + myMinRange;
-          makeGuess(rand);
-          return timeLimit;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    if (!isMyTurn || timeLimit === 0) return;
+    const timer = setInterval(() => setTimeLeft((prev) => Math.max(prev - 1, 0)), 1000);
     return () => clearInterval(timer);
-  }, [isMyTurn, timeLimit, myMinRange, myMaxRange, makeGuess]);
+  }, [isMyTurn, timeLimit]);
+
+  // Time's up: guess a random number from my valid range
+  useEffect(() => {
+    if (!isMyTurn || timeLimit === 0 || timeLeft > 0) return;
+    setConfirmGuess(null);
+    makeGuess(Math.floor(Math.random() * (myMaxRange - myMinRange + 1)) + myMinRange);
+  }, [isMyTurn, timeLimit, timeLeft, myMinRange, myMaxRange, makeGuess]);
 
   const handleGuess = () => {
     if (confirmGuess !== null && isMyTurn) {
       makeGuess(confirmGuess);
-      setGuess(null);
       setConfirmGuess(null);
-      setTimeLeft(timeLimit);
     }
   };
 

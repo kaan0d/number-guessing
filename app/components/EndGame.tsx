@@ -10,8 +10,7 @@ export default function EndGame() {
   const isWinner = gameState?.winner === playerId;
   const winner = gameState?.winner === gameState?.player1.id ? gameState?.player1 : gameState?.player2;
   const loser = gameState?.winner === gameState?.player1.id ? gameState?.player2 : gameState?.player1;
-  const myNumber = gameState?.player1.id === playerId ? gameState?.player1.selectedNumber : gameState?.player2?.selectedNumber;
-  const totalGuesses = gameState?.guesses.filter(g => g.response !== 'pending').length ?? 0;
+  const totalGuesses = gameState?.guesses.filter(g => g.guesser === gameState.winner).length ?? 0;
 
   return (
     <div className="w-full max-w-md mx-auto space-y-6 fade-in">

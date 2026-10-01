@@ -12,7 +12,9 @@ export default function NumberSelection() {
   const [confirmNum, setConfirmNum] = useState<number | null>(null);
 
   const isPlayer1 = gameState?.player1.id === playerId;
-  const myNumber = isPlayer1 ? gameState?.player1.selectedNumber : gameState?.player2?.selectedNumber;
+  const me = isPlayer1 ? gameState?.player1 : gameState?.player2;
+  const opponent = isPlayer1 ? gameState?.player2 : gameState?.player1;
+  const myNumber = me?.selectedNumber;
   const minNum = gameState?.settings.minNumber ?? 1;
   const maxNum = gameState?.settings.maxNumber ?? 100;
   const numbers = Array.from({ length: maxNum - minNum + 1 }, (_, i) => minNum + i);
@@ -78,16 +80,16 @@ export default function NumberSelection() {
       <div className="grid grid-cols-2 gap-4">
         <div className="bg-secondary rounded-xl p-4 text-center">
           <p className="text-xs text-muted-foreground mb-2">{t('you')}</p>
-          <p className="text-2xl mb-1">{gameState?.player1.avatar}</p>
-          <p className="text-sm font-semibold">{gameState?.player1.name}</p>
-          {gameState?.player1.isReady && <p className="text-xs text-green-500 mt-2">✅ {t('ready')}</p>}
+          <p className="text-2xl mb-1">{me?.avatar}</p>
+          <p className="text-sm font-semibold">{me?.name}</p>
+          {me?.isReady && <p className="text-xs text-green-500 mt-2">✅ {t('ready')}</p>}
         </div>
 
         <div className="bg-secondary rounded-xl p-4 text-center">
           <p className="text-xs text-muted-foreground mb-2">{t('opponent')}</p>
-          <p className="text-2xl mb-1">{gameState?.player2?.avatar ?? '?'}</p>
-          <p className="text-sm font-semibold">{gameState?.player2?.name ?? '?'}</p>
-          {gameState?.player2?.isReady ? (
+          <p className="text-2xl mb-1">{opponent?.avatar ?? '?'}</p>
+          <p className="text-sm font-semibold">{opponent?.name ?? '?'}</p>
+          {opponent?.isReady ? (
             <p className="text-xs text-green-500 mt-2">✅ {t('ready')}</p>
           ) : (
             <p className="text-xs text-muted-foreground animate-pulse mt-2">{t('waiting')}</p>

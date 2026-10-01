@@ -60,6 +60,7 @@ export const translations = {
     // Cancelled
     opponentLeft: 'Opponent Left',
     playerDisconnected: 'The other player has disconnected from the game.',
+    roomNotFound: 'Room not found or already full.',
     returnToMenu: 'Return to Main Menu',
     // Header
     room: 'Room:',
@@ -129,6 +130,7 @@ export const translations = {
     // Cancelled
     opponentLeft: 'Rakip Ayrıldı',
     playerDisconnected: 'Diğer oyuncu oyundan ayrıldı.',
+    roomNotFound: 'Oda bulunamadı veya dolu.',
     returnToMenu: 'Ana Menüye Dön',
     // Header
     room: 'Oda:',

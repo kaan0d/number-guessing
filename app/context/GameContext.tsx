@@ -57,244 +57,197 @@ interface GameContextType {
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
 
+const JOIN_TIMEOUT_MS = 5000;
+export const PENDING_HOST = 'pending_host';
+
+type Player = GameState['player1'];
+
+// Compute the automatic response for a guess against a secret number
+function computeResponse(guess: number, secretNumber: number): 'higher' | 'lower' | 'correct' {
+  if (guess === secretNumber) return 'correct';
+  if (guess < secretNumber) return 'higher';
+  return 'lower';
+}
+
+function resetRound(state: GameState): GameState {
+  const { minNumber, maxNumber } = state.settings;
+  const reset = (p: Player): Player => ({ ...p, selectedNumber: undefined, isReady: false, minRange: minNumber, maxRange: maxNumber });
+  return {
+    ...state,
+    gamePhase: 'number_selection',
+    player1: reset(state.player1),
+    player2: state.player2 ? reset(state.player2) : null,
+    guesses: [],
+    winner: null,
+    currentTurnPlayerId: null,
+  };
+}
+
 export function GameProvider({ children }: { children: ReactNode }) {
-  const [playerId] = useState(() => `player_${Math.random().toString(36).substr(2, 9)}`);
+  const [playerId] = useState(() => `player_${Math.random().toString(36).slice(2, 11)}`);
   const [playerName, setPlayerNameState] = useState(() => `Player${Math.floor(1000 + Math.random() * 9000)}`);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
-  const isHostRef = useRef<boolean>(false);
-  // Keep a ref to gameState for use in beforeunload
-  const gameStateRef = useRef<GameState | null>(null);
+  // Mirrors gameState synchronously, so handlers can compute the next state
+  // and broadcast it without side effects inside setState updaters.
+  const stateRef = useRef<GameState | null>(null);
 
-  useEffect(() => {
-    gameStateRef.current = gameState;
-  }, [gameState]);
+  const commit = useCallback((next: GameState | null) => {
+    stateRef.current = next;
+    setGameState(next);
+  }, []);
 
   const setPlayerName = (name: string) => {
     setPlayerNameState(name);
-    setGameState((prev) => {
-      if (!prev) return null;
-      const isPlayer1 = prev.player1.id === playerId;
-      if (isPlayer1) return { ...prev, player1: { ...prev.player1, name } };
-      if (prev.player2) return { ...prev, player2: { ...prev.player2, name } };
-      return prev;
-    });
+    const prev = stateRef.current;
+    if (!prev) return;
+    if (prev.player1.id === playerId) commit({ ...prev, player1: { ...prev.player1, name } });
+    else if (prev.player2) commit({ ...prev, player2: { ...prev.player2, name } });
   };
 
-  const broadcast = useCallback((event: string, payload: any) => {
-    if (channelRef.current) {
-      channelRef.current.send({
-        type: 'broadcast',
-        event,
-        payload: { ...payload, senderId: playerId },
-      });
-    }
+  const broadcast = useCallback((event: string, payload: Record<string, unknown>) => {
+    channelRef.current?.send({
+      type: 'broadcast',
+      event,
+      payload: { ...payload, senderId: playerId },
+    });
   }, [playerId]);
 
-  // Compute the automatic response for a guess against a secret number
-  const computeResponse = (guess: number, secretNumber: number): 'higher' | 'lower' | 'correct' => {
-    if (guess === secretNumber) return 'correct';
-    if (guess < secretNumber) return 'higher';
-    return 'lower';
-  };
+  const setupChannel = useCallback((roomCode: string, onSubscribed?: () => void) => {
+    channelRef.current?.unsubscribe();
 
-  const setupChannel = useCallback((roomCode: string, isHost: boolean) => {
-    const supabase = createClient();
-
-    if (channelRef.current) {
-      channelRef.current.unsubscribe();
-    }
-
-    isHostRef.current = isHost;
-
-    const channel = supabase.channel(`room:${roomCode}`, {
+    const channel = createClient().channel(`room:${roomCode}`, {
       config: { broadcast: { self: false } },
     });
 
     channel
       .on('broadcast', { event: 'player_joined' }, ({ payload }) => {
-        if (payload.senderId === playerId) return;
-        if (!isHostRef.current) return;
-
-        setGameState((prev) => {
-          if (!prev) return null;
-          const updated: GameState = {
-            ...prev,
-            gamePhase: 'number_selection',
-            player2: {
-              id: payload.playerId,
-              name: payload.playerName,
-              avatar: '🎯',
-              isReady: false,
-              minRange: prev.settings.minNumber,
-              maxRange: prev.settings.maxNumber,
-            },
-          };
-          setTimeout(() => broadcast('state_sync', { state: updated }), 100);
-          return updated;
-        });
+        const prev = stateRef.current;
+        // Only the host accepts joins, and only into an empty seat.
+        if (!prev || prev.player1.id !== playerId || prev.gamePhase !== 'waiting') return;
+        const next: GameState = {
+          ...prev,
+          gamePhase: 'number_selection',
+          player2: {
+            id: payload.playerId,
+            name: payload.playerName,
+            avatar: '🎯',
+            isReady: false,
+            minRange: prev.settings.minNumber,
+            maxRange: prev.settings.maxNumber,
+          },
+        };
+        commit(next);
+        broadcast('state_sync', { state: next });
       })
       .on('broadcast', { event: 'state_sync' }, ({ payload }) => {
-        if (payload.senderId === playerId) return;
+        const prev = stateRef.current;
         const incoming = payload.state as GameState;
-        setGameState((prev) => {
-          if (!prev) return incoming;
-          const isPlayer1 = prev.player1.id === playerId;
-          if (isPlayer1) {
-            return {
-              ...incoming,
-              player1: {
-                ...incoming.player1,
-                selectedNumber: prev.player1.selectedNumber ?? incoming.player1.selectedNumber,
-                isReady: prev.player1.isReady || incoming.player1.isReady,
-              },
-            };
-          }
-          return {
-            ...incoming,
-            player2: incoming.player2 ? {
-              ...incoming.player2,
-              selectedNumber: prev.player2?.selectedNumber ?? incoming.player2.selectedNumber,
-              isReady: prev.player2?.isReady || incoming.player2.isReady,
-            } : null,
-          };
+        // Ignore syncs meant for another joiner of the same room.
+        if (!prev || !incoming.player2 || incoming.player2.id !== playerId) return;
+        commit({
+          ...incoming,
+          player2: {
+            ...incoming.player2,
+            selectedNumber: prev.player2?.selectedNumber ?? incoming.player2.selectedNumber,
+            isReady: !!prev.player2?.isReady || incoming.player2.isReady,
+          },
         });
       })
       .on('broadcast', { event: 'number_selected' }, ({ payload }) => {
-        if (payload.senderId === playerId) return;
-        setGameState((prev) => {
-          if (!prev) return null;
-          const isOpponentPlayer1 = payload.opponentId === prev.player1.id;
-          const myIsReady = isOpponentPlayer1 ? prev.player2?.isReady : prev.player1.isReady;
-          const bothReady = myIsReady && payload.isReady;
-          return {
-            ...prev,
-            gamePhase: bothReady ? 'guessing' : 'number_selection',
-            currentTurnPlayerId: bothReady ? prev.player1.id : null,
-            [isOpponentPlayer1 ? 'player1' : 'player2']: {
-              ...(isOpponentPlayer1 ? prev.player1 : prev.player2),
-              selectedNumber: payload.selectedNumber,
-              isReady: payload.isReady,
-            },
-          };
+        const prev = stateRef.current;
+        if (!prev) return;
+        const isOpponentPlayer1 = payload.opponentId === prev.player1.id;
+        const opponent = isOpponentPlayer1 ? prev.player1 : prev.player2;
+        if (!opponent) return;
+        const myIsReady = isOpponentPlayer1 ? prev.player2?.isReady : prev.player1.isReady;
+        const bothReady = !!myIsReady && payload.isReady;
+        commit({
+          ...prev,
+          gamePhase: bothReady ? 'guessing' : 'number_selection',
+          currentTurnPlayerId: bothReady ? prev.player1.id : null,
+          [isOpponentPlayer1 ? 'player1' : 'player2']: {
+            ...opponent,
+            selectedNumber: payload.selectedNumber,
+            isReady: payload.isReady,
+          },
         });
       })
       .on('broadcast', { event: 'guess_made' }, ({ payload }) => {
-        // The opponent has guessed — we are the one whose number is being guessed.
-        // Automatically compute response and reply.
-        if (payload.senderId === playerId) return;
+        // The opponent guessed our number: answer automatically.
+        const prev = stateRef.current;
+        if (!prev || !prev.player2 || prev.gamePhase !== 'guessing') return;
+        const isPlayer1 = prev.player1.id === playerId;
+        const mySecretNumber = isPlayer1 ? prev.player1.selectedNumber : prev.player2.selectedNumber;
+        if (mySecretNumber === undefined) return;
 
-        setGameState((prev) => {
-          if (!prev) return null;
+        const guessedNumber = payload.guessedNumber as number;
+        const guesserId = payload.guesserId as string;
+        const response = computeResponse(guessedNumber, mySecretNumber);
+        const guesses = [...prev.guesses, { guesser: guesserId, number: guessedNumber, response }];
 
-          // Find our secret number
-          const isPlayer1 = prev.player1.id === playerId;
-          const mySecretNumber = isPlayer1 ? prev.player1.selectedNumber : prev.player2?.selectedNumber;
+        // Narrow the guesser's range
+        const isGuesserPlayer1 = guesserId === prev.player1.id;
+        const guesser = isGuesserPlayer1 ? prev.player1 : prev.player2;
+        const newMin = response === 'higher' ? Math.max(guesser.minRange, guessedNumber + 1) : guesser.minRange;
+        const newMax = response === 'lower' ? Math.min(guesser.maxRange, guessedNumber - 1) : guesser.maxRange;
 
-          if (mySecretNumber === undefined) return prev;
+        const gamePhase: GameState['gamePhase'] = response === 'correct' ? 'ended' : 'guessing';
+        const winner = response === 'correct' ? guesserId : null;
+        // Turns alternate: after answering, we guess next.
+        const currentTurnPlayerId = response === 'correct' ? null : playerId;
 
-          const guessedNumber = payload.guessedNumber as number;
-          const guesserId = payload.guesserId as string;
-          const response = computeResponse(guessedNumber, mySecretNumber);
-
-          const newGuess = { guesser: guesserId, number: guessedNumber, response };
-          const newGuesses = [...(prev.guesses || []), newGuess];
-
-          // Update the GUESSER'S range
-          const isGuesserPlayer1 = guesserId === prev.player1.id;
-          const guesserCurrent = isGuesserPlayer1 ? prev.player1 : prev.player2;
-          const newMin = response === 'higher'
-            ? Math.max(guesserCurrent?.minRange || 1, guessedNumber + 1)
-            : (guesserCurrent?.minRange || 1);
-          const newMax = response === 'lower'
-            ? Math.min(guesserCurrent?.maxRange || 100, guessedNumber - 1)
-            : (guesserCurrent?.maxRange || 100);
-
-          const newPhase = response === 'correct' ? 'ended' : 'guessing';
-          const newWinner = response === 'correct' ? guesserId : null;
-          // After responding, it's now the guesser's turn again (they keep guessing until correct)
-          // Actually the turns alternate: after we respond, it's now the OTHER player's turn
-          const nextTurn = response === 'correct' ? null : playerId;
-
-          // Broadcast the result back so both players see it
-          setTimeout(() => {
-            broadcast('guess_result', {
-              guesses: newGuesses,
-              guesserId,
-              newMin,
-              newMax,
-              response,
-              gamePhase: newPhase,
-              winner: newWinner,
-              currentTurnPlayerId: nextTurn,
-            });
-          }, 50);
-
-          return {
-            ...prev,
-            guesses: newGuesses,
-            player1: isGuesserPlayer1 ? { ...prev.player1, minRange: newMin, maxRange: newMax } : prev.player1,
-            player2: prev.player2 && !isGuesserPlayer1 ? { ...prev.player2, minRange: newMin, maxRange: newMax } : prev.player2,
-            gamePhase: newPhase as GameState['gamePhase'],
-            winner: newWinner,
-            currentTurnPlayerId: nextTurn,
-          };
+        commit({
+          ...prev,
+          guesses,
+          player1: isGuesserPlayer1 ? { ...prev.player1, minRange: newMin, maxRange: newMax } : prev.player1,
+          player2: isGuesserPlayer1 ? prev.player2 : { ...prev.player2, minRange: newMin, maxRange: newMax },
+          gamePhase,
+          winner,
+          currentTurnPlayerId,
         });
+        broadcast('guess_result', { guesses, guesserId, newMin, newMax, gamePhase, winner, currentTurnPlayerId });
       })
       .on('broadcast', { event: 'guess_result' }, ({ payload }) => {
-        if (payload.senderId === playerId) return;
-        setGameState((prev) => {
-          if (!prev) return null;
-          const isGuesserPlayer1 = payload.guesserId === prev.player1.id;
-          return {
-            ...prev,
-            guesses: payload.guesses,
-            player1: isGuesserPlayer1
-              ? { ...prev.player1, minRange: payload.newMin, maxRange: payload.newMax }
-              : prev.player1,
-            player2: prev.player2 && !isGuesserPlayer1
-              ? { ...prev.player2, minRange: payload.newMin, maxRange: payload.newMax }
-              : prev.player2,
-            gamePhase: payload.gamePhase,
-            winner: payload.winner,
-            currentTurnPlayerId: payload.currentTurnPlayerId,
-          };
+        const prev = stateRef.current;
+        if (!prev) return;
+        const isGuesserPlayer1 = payload.guesserId === prev.player1.id;
+        commit({
+          ...prev,
+          guesses: payload.guesses,
+          player1: isGuesserPlayer1
+            ? { ...prev.player1, minRange: payload.newMin, maxRange: payload.newMax }
+            : prev.player1,
+          player2: prev.player2 && !isGuesserPlayer1
+            ? { ...prev.player2, minRange: payload.newMin, maxRange: payload.newMax }
+            : prev.player2,
+          gamePhase: payload.gamePhase,
+          winner: payload.winner,
+          currentTurnPlayerId: payload.currentTurnPlayerId,
         });
       })
-      .on('broadcast', { event: 'rematch' }, ({ payload }) => {
-        if (payload.senderId === playerId) return;
-        setGameState((prev) => {
-          if (!prev) return null;
-          const { minNumber, maxNumber } = prev.settings;
-          return {
-            ...prev,
-            gamePhase: 'number_selection',
-            player1: { ...prev.player1, selectedNumber: undefined, isReady: false, minRange: minNumber, maxRange: maxNumber },
-            player2: prev.player2 ? { ...prev.player2, selectedNumber: undefined, isReady: false, minRange: minNumber, maxRange: maxNumber } : null,
-            guesses: [],
-            winner: null,
-            currentTurnPlayerId: null,
-          };
-        });
+      .on('broadcast', { event: 'rematch' }, () => {
+        const prev = stateRef.current;
+        if (prev) commit(resetRound(prev));
       })
       .on('broadcast', { event: 'player_left' }, ({ payload }) => {
-        if (payload.senderId === playerId) return;
-        setGameState((prev) => {
-          if (!prev) return null;
-          return { ...prev, gamePhase: 'cancelled' };
-        });
+        const prev = stateRef.current;
+        if (!prev) return;
+        // Ignore strangers (e.g. a rejected third player) leaving the room.
+        if (payload.senderId !== prev.player1.id && payload.senderId !== prev.player2?.id) return;
+        commit({ ...prev, gamePhase: 'cancelled' });
       })
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') onSubscribed?.();
+      });
 
     channelRef.current = channel;
-  }, [playerId, broadcast]);
+  }, [playerId, broadcast, commit]);
 
-  // Broadcast player_left when tab closes
+  // Tell the opponent when the tab closes
   useEffect(() => {
     const handleBeforeUnload = () => {
-      if (gameStateRef.current && gameStateRef.current.gamePhase !== 'lobby') {
-        broadcast('player_left', {});
-      }
+      if (stateRef.current) broadcast('player_left', {});
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
@@ -302,8 +255,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
 
   const createGame = (name: string, settings: GameSettings) => {
     setPlayerNameState(name);
+    // ponytail: 4-digit codes can collide between rooms; add a presence check if traffic grows
     const roomCode = String(Math.floor(1000 + Math.random() * 9000));
-    const newGame: GameState = {
+    commit({
       roomCode,
       settings,
       gamePhase: 'waiting',
@@ -313,94 +267,77 @@ export function GameProvider({ children }: { children: ReactNode }) {
       guesses: [],
       winner: null,
       createdAt: Date.now(),
-    };
-    setGameState(newGame);
-    setupChannel(roomCode, true);
+    });
+    setupChannel(roomCode);
   };
 
   const joinGame = (roomCode: string, name: string) => {
     setPlayerNameState(name);
     const trimmedCode = roomCode.trim();
-    const defaultSettings: GameSettings = { minNumber: 1, maxNumber: 100, turnTimeLimit: 10 };
-    const joiningGame: GameState = {
+    commit({
       roomCode: trimmedCode,
-      settings: defaultSettings,
+      settings: { minNumber: 1, maxNumber: 100, turnTimeLimit: 10 },
       gamePhase: 'number_selection',
-      player1: { id: 'pending_host', name: 'Waiting...', avatar: '🎮', isReady: false, minRange: 1, maxRange: 100 },
+      player1: { id: PENDING_HOST, name: '...', avatar: '🎮', isReady: false, minRange: 1, maxRange: 100 },
       player2: { id: playerId, name, avatar: '🎯', isReady: false, minRange: 1, maxRange: 100 },
       currentTurnPlayerId: null,
       guesses: [],
       winner: null,
       createdAt: Date.now(),
-    };
-    setGameState(joiningGame);
-    setupChannel(trimmedCode, false);
-    setTimeout(() => {
-      broadcast('player_joined', { playerId, playerName: name, roomCode: trimmedCode });
-    }, 500);
+    });
+    setupChannel(trimmedCode, () => {
+      broadcast('player_joined', { playerId, playerName: name });
+      // No host answered: the room does not exist or is already full.
+      setTimeout(() => {
+        const s = stateRef.current;
+        if (s?.roomCode === trimmedCode && s.player1.id === PENDING_HOST) commit({ ...s, gamePhase: 'cancelled' });
+      }, JOIN_TIMEOUT_MS);
+    });
   };
 
   const selectNumber = (number: number) => {
-    setGameState((prev) => {
-      if (!prev) return null;
-      const isPlayer1 = prev.player1.id === playerId;
-      const opponentReady = isPlayer1 ? prev.player2?.isReady : prev.player1.isReady;
-      const updated: GameState = {
-        ...prev,
-        gamePhase: opponentReady ? 'guessing' : 'number_selection',
-        currentTurnPlayerId: opponentReady ? prev.player1.id : null,
-        [isPlayer1 ? 'player1' : 'player2']: {
-          ...(isPlayer1 ? prev.player1 : prev.player2),
-          selectedNumber: number,
-          isReady: true,
-        },
-      };
-      broadcast('number_selected', { opponentId: playerId, selectedNumber: number, isReady: true });
-      return updated;
+    const prev = stateRef.current;
+    if (!prev || !prev.player2) return;
+    const isPlayer1 = prev.player1.id === playerId;
+    const me = isPlayer1 ? prev.player1 : prev.player2;
+    const opponentReady = isPlayer1 ? prev.player2.isReady : prev.player1.isReady;
+    commit({
+      ...prev,
+      gamePhase: opponentReady ? 'guessing' : 'number_selection',
+      currentTurnPlayerId: opponentReady ? prev.player1.id : null,
+      [isPlayer1 ? 'player1' : 'player2']: { ...me, selectedNumber: number, isReady: true },
     });
+    broadcast('number_selected', { opponentId: playerId, selectedNumber: number, isReady: true });
   };
 
-  const makeGuess = (number: number) => {
-    setGameState((prev) => {
-      if (!prev) return null;
-      // Broadcast guess to opponent — they will auto-compute the response
-      broadcast('guess_made', { guesserId: playerId, guessedNumber: number });
-      // Optimistically add as pending locally while we wait for guess_result
-      const newGuess = { guesser: playerId, number, response: 'pending' as const };
-      return { ...prev, guesses: [...prev.guesses, newGuess], currentTurnPlayerId: null };
+  const makeGuess = useCallback((number: number) => {
+    const prev = stateRef.current;
+    if (!prev || prev.currentTurnPlayerId !== playerId) return;
+    // The opponent computes the response; show it as pending until guess_result arrives
+    commit({
+      ...prev,
+      guesses: [...prev.guesses, { guesser: playerId, number, response: 'pending' }],
+      currentTurnPlayerId: null,
     });
-  };
+    broadcast('guess_made', { guesserId: playerId, guessedNumber: number });
+  }, [playerId, broadcast, commit]);
 
   const rematch = () => {
+    const prev = stateRef.current;
+    if (!prev) return;
+    commit(resetRound(prev));
     broadcast('rematch', {});
-    setGameState((prev) => {
-      if (!prev) return null;
-      const { minNumber, maxNumber } = prev.settings;
-      return {
-        ...prev,
-        gamePhase: 'number_selection',
-        player1: { ...prev.player1, selectedNumber: undefined, isReady: false, minRange: minNumber, maxRange: maxNumber },
-        player2: prev.player2 ? { ...prev.player2, selectedNumber: undefined, isReady: false, minRange: minNumber, maxRange: maxNumber } : null,
-        guesses: [],
-        winner: null,
-        currentTurnPlayerId: null,
-      };
-    });
   };
 
   const leaveGame = () => {
     broadcast('player_left', {});
-    if (channelRef.current) {
-      channelRef.current.unsubscribe();
-      channelRef.current = null;
-    }
-    setGameState(null);
+    channelRef.current?.unsubscribe();
+    channelRef.current = null;
+    commit(null);
   };
 
-  useEffect(() => {
-    return () => {
-      if (channelRef.current) channelRef.current.unsubscribe();
-    };
+  useEffect(() => () => {
+    channelRef.current?.unsubscribe();
   }, []);
 
   return (
