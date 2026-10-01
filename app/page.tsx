@@ -10,7 +10,7 @@ import GuessingPhase from './components/GuessingPhase';
 import EndGame from './components/EndGame';
 
 function GameContent() {
-  const { gameState, connectionError, playerId, leaveGame } = useGame();
+  const { gameState, opponentAway, connectionError, playerId, leaveGame } = useGame();
   const me = gameState?.player1.id === playerId ? gameState?.player1 : gameState?.player2;
   const opponent = gameState?.player1.id === playerId ? gameState?.player2 : gameState?.player1;
   const { language, setLanguage, t } = useLanguage();
@@ -64,6 +64,11 @@ function GameContent() {
       {!gameState && connectionError && (
         <p role="alert" className="mx-auto mt-4 max-w-md px-4 text-center text-sm font-medium text-destructive">
           {t(connectionError === 'connection' ? 'connectionLost' : connectionError === 'full' ? 'roomFull' : connectionError === 'server_full' ? 'serverFull' : 'roomNotFound')}
+        </p>
+      )}
+      {opponentAway && (
+        <p role="status" className="mx-auto mt-4 max-w-md px-4 text-center text-sm font-medium text-muted-foreground animate-pulse">
+          {t('opponentReconnecting')}
         </p>
       )}
       {!gameState && <MainMenu />}

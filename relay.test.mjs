@@ -51,6 +51,15 @@ test('relay: create, join, forward, full room, peer left', async () => {
   guest.close()
   assert.deepEqual(await host.next(), { type: 'peer_left' })
 
+  // A refreshed guest gets back into the room while the host is still there.
+  const back = await connect()
+  back.json({ type: 'join', room })
+  assert.deepEqual(await back.next(), { type: 'joined', room })
+  back.json({ type: 'broadcast', event: 'rejoin', payload: {} })
+  assert.deepEqual(await host.next(), { type: 'broadcast', event: 'rejoin', payload: {} })
+  back.close()
+  await host.next()
+
   for (const ws of [host, lost, third]) ws.close()
   wss.close()
   server.close()

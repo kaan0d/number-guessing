@@ -5,7 +5,7 @@ import { useGame } from '../context/GameContext';
 import { useLanguage } from '../context/LanguageContext';
 
 export default function GuessingPhase() {
-  const { gameState, playerId, makeGuess } = useGame();
+  const { gameState, opponentAway, playerId, makeGuess } = useGame();
   const { t } = useLanguage();
   const [confirmGuess, setConfirmGuess] = useState<number | null>(null);
   const [timeLeft, setTimeLeft] = useState<number>(10);
@@ -35,17 +35,18 @@ export default function GuessingPhase() {
     }
   }, [gameState?.guesses]);
 
-  // Timer: counts down only on my turn, and only if there's a time limit
+  // Timer: counts down only on my turn, and only if there's a time limit.
+  // Starts over when a disconnected opponent comes back.
   useEffect(() => {
     setTimeLeft(timeLimit);
-    if (!isMyTurn || timeLimit === 0) return;
+    if (!isMyTurn || timeLimit === 0 || opponentAway) return;
     const timer = setInterval(() => setTimeLeft((prev) => Math.max(prev - 1, 0)), 1000);
     return () => clearInterval(timer);
-  }, [isMyTurn, timeLimit]);
+  }, [isMyTurn, timeLimit, opponentAway]);
 
   // Time's up: guess a random number from my valid range
   useEffect(() => {
-    if (!isMyTurn || timeLimit === 0 || timeLeft > 0) return;
+    if (!isMyTurn || timeLimit === 0 || timeLeft > 0 || opponentAway) return;
     setConfirmGuess(null);
     makeGuess(Math.floor(Math.random() * (myMaxRange - myMinRange + 1)) + myMinRange);
   }, [isMyTurn, timeLimit, timeLeft, myMinRange, myMaxRange, makeGuess]);

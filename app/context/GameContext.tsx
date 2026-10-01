@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, useRef, ReactNode, useCallback } from 'react';
-import { GameSettings, GameState, applyResponse, computeResponse, newPlayer, playerOf, resetRound, revealOpponent } from './rules';
+import { GameSettings, GameState, applyResponse, computeResponse, hideSecret, newPlayer, playerOf, resetRound, revealOpponent, takeBackPending } from './rules';
 
 export type { GameSettings, GameState } from './rules';
 
@@ -9,6 +9,7 @@ export type ConnectionError = 'not_found' | 'full' | 'server_full' | 'connection
 
 interface GameContextType {
   gameState: GameState | null;
+  opponentAway: boolean;
   connectionError: ConnectionError | null;
   playerId: string;
   playerName: string;
@@ -25,16 +26,38 @@ const GameContext = createContext<GameContextType | undefined>(undefined);
 
 type Payload = Record<string, any>;
 
+const SAVE_KEY = 'game';
+const PLAYER_KEY = 'playerId';
+// How long we wait for a disconnected opponent before calling the game off.
+const REJOIN_GRACE_MS = 30_000;
+
+// Session storage survives a refresh but not closing the tab. Missing during
+// server rendering and in some private modes, hence the try/catch.
+function loadSaved(): GameState | null {
+  try { return JSON.parse(sessionStorage.getItem(SAVE_KEY) ?? 'null'); } catch { return null; }
+}
+
 function relayUrl() {
   return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
 }
 
 export function GameProvider({ children }: { children: ReactNode }) {
-  const [playerId] = useState(() => `player_${Math.random().toString(36).slice(2, 11)}`);
+  // Kept in session storage so a refreshed tab can rejoin as the same player.
+  const [playerId] = useState(() => {
+    let id = `player_${Math.random().toString(36).slice(2, 11)}`;
+    try {
+      id = sessionStorage.getItem(PLAYER_KEY) ?? id;
+      sessionStorage.setItem(PLAYER_KEY, id);
+    } catch {}
+    return id;
+  });
   const [playerName, setPlayerNameState] = useState(() => `Player${Math.floor(1000 + Math.random() * 9000)}`);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [connectionError, setConnectionError] = useState<ConnectionError | null>(null);
+  const [opponentAway, setOpponentAway] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  // Set while the opponent is disconnected; fires the cancel after the grace period.
+  const awayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Mirrors gameState synchronously, so handlers can compute the next state
   // and broadcast it without side effects inside setState updaters.
   const stateRef = useRef<GameState | null>(null);
@@ -42,6 +65,16 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const commit = useCallback((next: GameState | null) => {
     stateRef.current = next;
     setGameState(next);
+    try {
+      if (next?.player2 && next.gamePhase !== 'cancelled') sessionStorage.setItem(SAVE_KEY, JSON.stringify(next));
+      else sessionStorage.removeItem(SAVE_KEY);
+    } catch {}
+  }, []);
+
+  const clearAway = useCallback(() => {
+    if (awayTimer.current) clearTimeout(awayTimer.current);
+    awayTimer.current = null;
+    setOpponentAway(false);
   }, []);
 
   const setPlayerName = (name: string) => {
@@ -78,19 +111,34 @@ export function GameProvider({ children }: { children: ReactNode }) {
         return;
       }
       case 'state_sync': {
+        // The opponent's state wins, except for our own secret number, which
+        // only we know. Sent when we join and when we rejoin after a refresh.
         const incoming = payload.state as GameState;
-        if (!incoming.player2 || incoming.player2.id !== playerId) return;
+        const key = incoming.player1.id === playerId ? 'player1' : incoming.player2?.id === playerId ? 'player2' : null;
+        if (!key) return;
+        const me = playerOf(prev, playerId);
+        const theirs = incoming[key]!;
+        // Our lock-in may not have reached them yet (same round, they still see us unready).
+        const keep = me.isReady && (theirs.isReady || prev.gamePhase === incoming.gamePhase);
         commit({
           ...incoming,
-          player2: {
-            ...incoming.player2,
-            selectedNumber: prev.player2?.selectedNumber ?? incoming.player2.selectedNumber,
-            isReady: !!prev.player2?.isReady || incoming.player2.isReady,
-          },
+          [key]: { ...theirs, selectedNumber: keep ? me.selectedNumber : theirs.selectedNumber, isReady: keep },
         });
+        if (keep && !theirs.isReady) broadcast('number_selected', { opponentId: playerId, isReady: true });
+        return;
+      }
+      case 'rejoin': {
+        // ponytail: a stranger who joins during the grace period takes the free seat and blocks the rejoin
+        const opponentId = prev.player1.id === playerId ? prev.player2?.id : prev.player1.id;
+        if (payload.senderId !== opponentId) return;
+        clearAway();
+        const next = takeBackPending(prev, playerId);
+        commit(next);
+        broadcast('state_sync', { state: next.gamePhase === 'ended' ? next : hideSecret(next, playerId) });
         return;
       }
       case 'number_selected': {
+        if (prev.gamePhase !== 'number_selection') return;
         const isOpponentPlayer1 = payload.opponentId === prev.player1.id;
         const opponent = isOpponentPlayer1 ? prev.player1 : prev.player2;
         if (!opponent) return;
@@ -133,7 +181,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
         commit(resetRound(prev));
         return;
     }
-  }, [playerId, broadcast, commit]);
+  }, [playerId, broadcast, commit, clearAway]);
 
   // Opens a relay connection, sends `hello` (create or join), then routes
   // relay replies to `onReady` and game events to onEvent.
@@ -153,13 +201,20 @@ export function GameProvider({ children }: { children: ReactNode }) {
       } else if (msg.type === 'error') {
         wsRef.current = null;
         ws.close();
+        commit(null);
         setConnectionError(msg.reason);
       } else if (msg.type === 'peer_left') {
-        // Leave the room too, so nobody can join a finished game.
-        wsRef.current = null;
-        ws.close();
-        const prev = stateRef.current;
-        if (prev) commit({ ...prev, gamePhase: 'cancelled' });
+        // Give them time to come back after a refresh, then leave the room too,
+        // so nobody can join a finished game.
+        clearAway();
+        setOpponentAway(true);
+        awayTimer.current = setTimeout(() => {
+          clearAway();
+          wsRef.current = null;
+          ws.close();
+          const prev = stateRef.current;
+          if (prev) commit({ ...prev, gamePhase: 'cancelled' });
+        }, REJOIN_GRACE_MS);
       } else if (msg.type === 'broadcast') {
         onEvent(msg.event, msg.payload);
       }
@@ -173,7 +228,16 @@ export function GameProvider({ children }: { children: ReactNode }) {
         setConnectionError('connection');
       }
     };
-  }, [commit, onEvent]);
+  }, [commit, onEvent, clearAway]);
+
+  // A refreshed tab rejoins its game. Until the opponent answers with
+  // state_sync nobody may guess, so the turn is cleared.
+  useEffect(() => {
+    const saved = loadSaved();
+    if (!saved) return;
+    commit({ ...saved, currentTurnPlayerId: null });
+    connect({ type: 'join', room: saved.roomCode }, () => broadcast('rejoin', {}));
+  }, [commit, connect, broadcast]);
 
   const createGame = (name: string, settings: GameSettings) => {
     setPlayerNameState(name);
@@ -227,7 +291,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
 
   const makeGuess = useCallback((number: number) => {
     const prev = stateRef.current;
-    if (!prev || prev.currentTurnPlayerId !== playerId) return;
+    // No guessing while the opponent is away: nobody would answer.
+    if (!prev || prev.currentTurnPlayerId !== playerId || awayTimer.current) return;
     // The opponent computes the response; show it as pending until guess_result arrives
     commit({
       ...prev,
@@ -249,11 +314,13 @@ export function GameProvider({ children }: { children: ReactNode }) {
     const ws = wsRef.current;
     wsRef.current = null;
     ws?.close();
+    clearAway();
     setConnectionError(null);
     commit(null);
   };
 
   useEffect(() => () => {
+    clearAway();
     const ws = wsRef.current;
     wsRef.current = null;
     ws?.close();
@@ -261,7 +328,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
 
   return (
     <GameContext.Provider value={{
-      gameState, connectionError, playerId, playerName, setPlayerName,
+      gameState, opponentAway, connectionError, playerId, playerName, setPlayerName,
       createGame, joinGame, selectNumber, makeGuess, rematch, leaveGame,
     }}>
       {children}

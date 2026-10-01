@@ -82,6 +82,21 @@ export function applyResponse(state: GameState, guesserId: string, guess: number
   };
 }
 
+// What we send an opponent who rejoins: everything but our secret number.
+export function hideSecret(state: GameState, myId: string): GameState {
+  return state.player1.id === myId
+    ? { ...state, player1: { ...state.player1, selectedNumber: undefined } }
+    : { ...state, player2: { ...state.player2!, selectedNumber: undefined } };
+}
+
+// A guess of ours still pending when the opponent dropped never reached them:
+// take it back and give the turn back to us.
+export function takeBackPending(state: GameState, myId: string): GameState {
+  const last = state.guesses[state.guesses.length - 1];
+  if (last?.response !== 'pending' || last.guesser !== myId) return state;
+  return { ...state, guesses: state.guesses.slice(0, -1), currentTurnPlayerId: myId };
+}
+
 export function resetRound(state: GameState): GameState {
   const reset = (p: Player): Player => ({
     ...p, selectedNumber: undefined, isReady: false, minRange: state.settings.minNumber, maxRange: state.settings.maxNumber,

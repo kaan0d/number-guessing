@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { applyResponse, computeResponse, newPlayer, resetRound, revealOpponent } from './app/context/rules.ts'
+import { applyResponse, computeResponse, hideSecret, newPlayer, resetRound, revealOpponent, takeBackPending } from './app/context/rules.ts'
 
 const settings = { minNumber: 1, maxNumber: 100, turnTimeLimit: 0 }
 const start = () => ({
@@ -38,4 +38,15 @@ test('rules: answer narrows range, passes turn, ends on correct', () => {
   assert.equal(s.player1.minRange, 1)
   assert.equal(s.guesses.length, 0)
   assert.equal(s.player1.wins, 1)
+})
+
+test('rules: rejoin sync hides our secret and takes back an unanswered guess', () => {
+  const s = takeBackPending(start(), 'a')
+  assert.equal(s.guesses.length, 0)
+  assert.equal(s.currentTurnPlayerId, 'a')
+  assert.equal(takeBackPending(start(), 'b').guesses.length, 1)
+
+  const sent = hideSecret(s, 'a')
+  assert.equal(sent.player1.selectedNumber, undefined)
+  assert.equal(sent.player2.selectedNumber, 70)
 })

@@ -76,6 +76,7 @@ export const translations = {
     areYouSure: 'Are you sure?',
     guess: 'Guess',
     score: 'Score',
+    opponentReconnecting: 'Opponent disconnected. Waiting 30 s for them to come back…',
   },
   tr: {
     appTitle: 'Sayı Tahmin Savaşı',
@@ -150,6 +151,7 @@ export const translations = {
     areYouSure: 'Emin misiniz?',
     guess: 'Tahmin Et',
     score: 'Skor',
+    opponentReconnecting: 'Rakibin bağlantısı koptu. Geri dönmesi için 30 sn bekleniyor…',
   },
 };
 
