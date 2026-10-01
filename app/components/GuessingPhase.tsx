@@ -4,6 +4,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useGame } from '../context/GameContext';
 import { useLanguage } from '../context/LanguageContext';
 
+const DEADLINE_KEY = 'turnDeadline';
+
 export default function GuessingPhase() {
   const { gameState, opponentAway, playerId, makeGuess } = useGame();
   const { t } = useLanguage();
@@ -22,6 +24,8 @@ export default function GuessingPhase() {
   const timeLimit = gameState?.settings.turnTimeLimit ?? 10;
 
   const isMyTurn = gameState?.currentTurnPlayerId === playerId;
+  // Identifies the turn: a pending guess is taken back on rejoin, so only answered ones count.
+  const turn = gameState?.guesses.filter(g => g.response !== 'pending').length ?? 0;
 
   // Detect new resolved guesses and show result briefly
   useEffect(() => {
@@ -36,13 +40,26 @@ export default function GuessingPhase() {
   }, [gameState?.guesses]);
 
   // Timer: counts down only on my turn, and only if there's a time limit.
-  // Starts over when a disconnected opponent comes back.
+  // Starts over when a disconnected opponent comes back. The deadline sits in
+  // session storage, so refreshing the page does not restart my turn.
   useEffect(() => {
     setTimeLeft(timeLimit);
     if (!isMyTurn || timeLimit === 0 || opponentAway) return;
-    const timer = setInterval(() => setTimeLeft((prev) => Math.max(prev - 1, 0)), 1000);
-    return () => clearInterval(timer);
-  }, [isMyTurn, timeLimit, opponentAway]);
+    let deadline = Date.now() + timeLimit * 1000;
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(DEADLINE_KEY) ?? 'null');
+      if (saved?.turn === turn) deadline = saved.deadline;
+      else sessionStorage.setItem(DEADLINE_KEY, JSON.stringify({ turn, deadline }));
+    } catch {}
+    const tick = () => setTimeLeft(Math.max(Math.ceil((deadline - Date.now()) / 1000), 0));
+    tick();
+    const timer = setInterval(tick, 250);
+    // Runs when the turn ends, not on a page refresh.
+    return () => {
+      clearInterval(timer);
+      try { sessionStorage.removeItem(DEADLINE_KEY); } catch {}
+    };
+  }, [isMyTurn, timeLimit, opponentAway, turn]);
 
   // Time's up: guess a random number from my valid range
   useEffect(() => {
