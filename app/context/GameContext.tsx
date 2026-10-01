@@ -1,44 +1,9 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, useRef, ReactNode, useCallback } from 'react';
+import { GameSettings, GameState, applyResponse, computeResponse, newPlayer, playerOf, resetRound, revealOpponent } from './rules';
 
-export interface GameSettings {
-  minNumber: number;
-  maxNumber: number;
-  turnTimeLimit: number; // seconds, 0 = no limit
-}
-
-export interface GameState {
-  roomCode: string;
-  settings: GameSettings;
-  gamePhase: 'lobby' | 'waiting' | 'number_selection' | 'guessing' | 'ended' | 'cancelled';
-  player1: {
-    id: string;
-    name: string;
-    avatar: string;
-    selectedNumber?: number;
-    isReady: boolean;
-    minRange: number;
-    maxRange: number;
-  };
-  player2: {
-    id: string;
-    name: string;
-    avatar: string;
-    selectedNumber?: number;
-    isReady: boolean;
-    minRange: number;
-    maxRange: number;
-  } | null;
-  currentTurnPlayerId: string | null;
-  guesses: Array<{
-    guesser: string;
-    number: number;
-    response: 'higher' | 'lower' | 'correct' | 'pending';
-  }>;
-  winner: string | null;
-  createdAt: number;
-}
+export type { GameSettings, GameState } from './rules';
 
 export type ConnectionError = 'not_found' | 'full' | 'server_full' | 'connection';
 
@@ -58,29 +23,7 @@ interface GameContextType {
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
 
-type Player = GameState['player1'];
 type Payload = Record<string, any>;
-
-// Compute the automatic response for a guess against a secret number
-function computeResponse(guess: number, secretNumber: number): 'higher' | 'lower' | 'correct' {
-  if (guess === secretNumber) return 'correct';
-  if (guess < secretNumber) return 'higher';
-  return 'lower';
-}
-
-function resetRound(state: GameState): GameState {
-  const { minNumber, maxNumber } = state.settings;
-  const reset = (p: Player): Player => ({ ...p, selectedNumber: undefined, isReady: false, minRange: minNumber, maxRange: maxNumber });
-  return {
-    ...state,
-    gamePhase: 'number_selection',
-    player1: reset(state.player1),
-    player2: state.player2 ? reset(state.player2) : null,
-    guesses: [],
-    winner: null,
-    currentTurnPlayerId: null,
-  };
-}
 
 function relayUrl() {
   return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
@@ -128,14 +71,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
         const next: GameState = {
           ...prev,
           gamePhase: 'number_selection',
-          player2: {
-            id: payload.playerId,
-            name: payload.playerName,
-            avatar: '🎯',
-            isReady: false,
-            minRange: prev.settings.minNumber,
-            maxRange: prev.settings.maxNumber,
-          },
+          player2: newPlayer(payload.playerId, payload.playerName, '🎯', prev.settings),
         };
         commit(next);
         broadcast('state_sync', { state: next });
@@ -164,66 +100,35 @@ export function GameProvider({ children }: { children: ReactNode }) {
           ...prev,
           gamePhase: bothReady ? 'guessing' : 'number_selection',
           currentTurnPlayerId: bothReady ? prev.player1.id : null,
-          [isOpponentPlayer1 ? 'player1' : 'player2']: {
-            ...opponent,
-            selectedNumber: payload.selectedNumber,
-            isReady: payload.isReady,
-          },
+          // The secret number itself stays with its owner until the game ends.
+          [isOpponentPlayer1 ? 'player1' : 'player2']: { ...opponent, isReady: payload.isReady },
         });
         return;
       }
       case 'guess_made': {
         // The opponent guessed our number: answer automatically.
-        if (!prev.player2 || prev.gamePhase !== 'guessing') return;
-        const isPlayer1 = prev.player1.id === playerId;
-        const mySecretNumber = isPlayer1 ? prev.player1.selectedNumber : prev.player2.selectedNumber;
-        if (mySecretNumber === undefined) return;
-
-        const guessedNumber = payload.guessedNumber as number;
         const guesserId = payload.guesserId as string;
-        const response = computeResponse(guessedNumber, mySecretNumber);
-        const guesses = [...prev.guesses, { guesser: guesserId, number: guessedNumber, response }];
-
-        // Narrow the guesser's range
-        const isGuesserPlayer1 = guesserId === prev.player1.id;
-        const guesser = isGuesserPlayer1 ? prev.player1 : prev.player2;
-        const newMin = response === 'higher' ? Math.max(guesser.minRange, guessedNumber + 1) : guesser.minRange;
-        const newMax = response === 'lower' ? Math.min(guesser.maxRange, guessedNumber - 1) : guesser.maxRange;
-
-        const gamePhase: GameState['gamePhase'] = response === 'correct' ? 'ended' : 'guessing';
-        const winner = response === 'correct' ? guesserId : null;
+        if (prev.gamePhase !== 'guessing' || prev.currentTurnPlayerId !== guesserId) return;
+        const mySecret = playerOf(prev, playerId).selectedNumber;
+        if (mySecret === undefined) return;
+        const guess = payload.guessedNumber as number;
+        const response = computeResponse(guess, mySecret);
         // Turns alternate: after answering, we guess next.
-        const currentTurnPlayerId = response === 'correct' ? null : playerId;
-
-        commit({
-          ...prev,
-          guesses,
-          player1: isGuesserPlayer1 ? { ...prev.player1, minRange: newMin, maxRange: newMax } : prev.player1,
-          player2: isGuesserPlayer1 ? prev.player2 : { ...prev.player2, minRange: newMin, maxRange: newMax },
-          gamePhase,
-          winner,
-          currentTurnPlayerId,
-        });
-        broadcast('guess_result', { guesses, guesserId, newMin, newMax, gamePhase, winner, currentTurnPlayerId });
+        commit(applyResponse(prev, guesserId, guess, response, playerId));
+        broadcast('guess_result', { guesserId, guess, response, secret: response === 'correct' ? mySecret : undefined });
         return;
       }
       case 'guess_result': {
-        const isGuesserPlayer1 = payload.guesserId === prev.player1.id;
-        commit({
-          ...prev,
-          guesses: payload.guesses,
-          player1: isGuesserPlayer1
-            ? { ...prev.player1, minRange: payload.newMin, maxRange: payload.newMax }
-            : prev.player1,
-          player2: prev.player2 && !isGuesserPlayer1
-            ? { ...prev.player2, minRange: payload.newMin, maxRange: payload.newMax }
-            : prev.player2,
-          gamePhase: payload.gamePhase,
-          winner: payload.winner,
-          currentTurnPlayerId: payload.currentTurnPlayerId,
-        });
+        const next = applyResponse(prev, payload.guesserId, payload.guess, payload.response, payload.senderId);
+        if (next.gamePhase !== 'ended') return commit(next);
+        // We won: reveal both numbers.
+        commit(revealOpponent(next, playerId, payload.secret));
+        broadcast('reveal', { secret: playerOf(next, playerId).selectedNumber });
         return;
       }
+      case 'reveal':
+        commit(revealOpponent(prev, playerId, payload.secret));
+        return;
       case 'rematch':
         commit(resetRound(prev));
         return;
@@ -276,7 +181,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       roomCode,
       settings,
       gamePhase: 'waiting',
-      player1: { id: playerId, name, avatar: '🎮', isReady: false, minRange: settings.minNumber, maxRange: settings.maxNumber },
+      player1: newPlayer(playerId, name, '🎮', settings),
       player2: null,
       currentTurnPlayerId: null,
       guesses: [],
@@ -316,7 +221,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       currentTurnPlayerId: opponentReady ? prev.player1.id : null,
       [isPlayer1 ? 'player1' : 'player2']: { ...me, selectedNumber: number, isReady: true },
     });
-    broadcast('number_selected', { opponentId: playerId, selectedNumber: number, isReady: true });
+    broadcast('number_selected', { opponentId: playerId, isReady: true });
   };
 
   const makeGuess = useCallback((number: number) => {
